@@ -1,6 +1,8 @@
 ## TransTrack: Multiple Object Tracking with Transformer
 
-(transtrack.png)
+<div style="align: center">
+<img src=./assets/transtrack.png/>
+</div>
 
 
 ## Introduction
