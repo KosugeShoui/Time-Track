@@ -22,6 +22,7 @@ visual_val_predict_dance
 visual_val_predict_visem
 visual_val_gt
 
+!./assets/
 *.avi
 *.jpg
 *.png
