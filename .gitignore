@@ -25,7 +25,6 @@ visual_val_gt
 !./assets/
 *.avi
 *.jpg
-*.png
 *.json
 *.diff
 
