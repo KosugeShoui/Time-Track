@@ -4,7 +4,7 @@
 
 
 ## Introduction
-[TransTrack: Multiple Object Tracking with Transformer](https://arxiv.org/abs/2012.15460)
+editing now
 
 ## Updates
 - update yet
@@ -25,12 +25,7 @@ Training data | Training time | MOTA% | FP% | FN% | IDs% | download
 If download link is invalid, models and logs are also available in [Github Release](https://github.com/PeizeSun/TransTrack/releases/tag/v0.1) and [Baidu Drive](https://pan.baidu.com/s/1dcHuHUZ9y2s7LEmvtVHZZw) by code m4iv.
 
 #### Notes
-- We observe about 1 MOTA noise.
-- If the resulting MOTA of your self-trained model is not desired, playing around with the --track_thresh sometimes gives a better performance.
-- The default track_thresh is 0.4, except for 0.5 in crowdhuman.
-- The training time is on 8 NVIDIA V100 GPUs with batchsize 16.
-- We use the models pre-trained on imagenet.
-- (crowdhuman, mot17_half) is first training on crowdhuman, then fine-tuning on mot17_half.
+- editing now
 
 
 ## Demo
@@ -146,13 +141,3 @@ TransTrack is released under MIT License.
 
 If you use TransTrack in your research or wish to refer to the baseline results published here, please use the following BibTeX entries:
 
-```BibTeX
-
-@article{transtrack,
-  title   =  {TransTrack: Multiple-Object Tracking with Transformer},
-  author  =  {Peize Sun and Jinkun Cao and Yi Jiang and Rufeng Zhang and Enze Xie and Zehuan Yuan and Changhu Wang and Ping Luo},
-  journal =  {arXiv preprint arXiv: 2012.15460},
-  year    =  {2020}
-}
-
-```
