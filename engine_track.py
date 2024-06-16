@@ -223,7 +223,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
     res_tracks = dict()
     pre_embed = None
     count = 1
-    for samples, targets in metric_logger.log_every(data_loader, 10, header):
+    for samples, targets ,past_samples in metric_logger.log_every(data_loader, 10, header):
         # pre process for track.
         if tracker is not None:
             if phase != 'train':
@@ -245,8 +245,8 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
             if det_val:
                 outputs = model(samples)
             else:
-                
-                outputs, pre_embed = model(samples, pre_embed)
+                # Time Frame Input 
+                outputs, pre_embed = model(samples, past_samples, pre_embed)
                     #count += 1
                     #pre_samples = samples
                     #print(torch.equal(nest2tensor(pre_samples,tensor_type), nest2tensor(samples,tensor_type)))

@@ -124,7 +124,7 @@ class DeformableDETR(nn.Module):
         combine_ten = torch.stack((t1_resized, t2_resized), dim=2)
         return combine_ten
 
-    def forward(self, samples: NestedTensor, pre_samples: NestedTensor,pre_embed=None):
+    def forward(self, samples: NestedTensor, past_samples: torch.Tensor,pre_embed=None):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -143,6 +143,8 @@ class DeformableDETR(nn.Module):
         assert samples.tensors.shape[0] == 1, 'track only supports batch 1'
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
+        if not isinstance(past_samples, NestedTensor):
+            past_samples = nested_tensor_from_tensor_list(past_samples)
         features, pos = self.backbone(samples)
         
         if pre_embed is not None:
@@ -181,13 +183,13 @@ class DeformableDETR(nn.Module):
             query_embeds = self.query_embed.weight
         
         
-        #setttings
+        #settings
         time_flag = True
         fp16 = False
         tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
-        com_samples = self.stack_tensor(pre_samples,samples,tensor_type)
-        #time_frames = None
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, time_flag,com_samples,masks, pos, query_embeds)
+        time_frames = self.stack_tensor(past_samples,samples,tensor_type)
+        
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, time_flag,time_frames,masks, pos, query_embeds)
         
         
         cur_hs = hs
@@ -221,7 +223,7 @@ class DeformableDETR(nn.Module):
             # track mode
             pre_reference, pre_tgt = pre_embed['reference'], pre_embed['tgt']
                     
-            hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,time_flag,com_samples, masks, pos, query_embeds, pre_reference, pre_tgt, memory)
+            hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,time_flag, time_frames, masks, pos, query_embeds, pre_reference, pre_tgt, memory)
             outputs_classes = []
             outputs_coords = []
             for lvl in range(hs.shape[0]):

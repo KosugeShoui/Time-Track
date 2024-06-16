@@ -27,23 +27,23 @@ python3 -m torch.distributed.launch \
 --set_cost_class 2 \
 --set_cost_bbox 5 \
 --set_cost_giou 2 \
---epochs 30 \
+--epochs 50 \
 --lr_drop 100 \
 --device cuda \
-#--resume ${OUTPUT_DIR}/checkpoint.pth \
-#--start_epoch 2 \
+--resume ${OUTPUT_DIR}/checkpoint.pth \
+--start_epoch 36 \
 #--resume ${OUTPUT_DIR}/checkpoint0050.pth \
 #--final_weight 1.0 \
 #--loss_schedule 
 
-"""
+
 #validation phase train val data
 python3 main_track.py  \
 --output_dir ${OUTPUT_DIR} \
 --dataset_file ${DATAFILE} \
 --coco_path ${DATAFILE} \
 --batch_size 1 \
---resume ${OUTPUT_DIR}/checkpoint0049.pth \
+--resume ${OUTPUT_DIR}/checkpoint.pth \
 --eval \
 --track_eval_split val \
 --with_box_refine \
@@ -88,4 +88,3 @@ python3 util/print_exp.py ${OUTPUT_DIR}
 python3 learning_curve.py ${OUTPUT_DIR}
 python3 learning_curve_each.py ${OUTPUT_DIR}
 python3 learning_unscaled_curve_each.py ${OUTPUT_DIR}
-"""

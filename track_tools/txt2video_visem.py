@@ -4,6 +4,7 @@ import json
 import cv2
 import glob as gb
 from colormap import colormap
+import argparse
 
 
 def txt2img(visual_path="visual_val_gt",exp_name='',video_num=''):
@@ -100,7 +101,7 @@ def img2video(visual_path="visual_val_gt",video_num=''):
     videowriter.release()
     print("img2video Done")
 
-
+"""
 if __name__ == '__main__':
     #visual_path="visual_val_predict_visem"
     visual_path="visual_test_predict_visem"
@@ -108,7 +109,19 @@ if __name__ == '__main__':
         visual_path =sys.argv[1]
     
     #select exp name & video num 
-    exp_name = 'output_visem/exp_0602_ep50_alldata'
-    video_num = 60
+    exp_name = 'output_visem/exp_0604_ep50_re'
+    video_num = 38
     txt2img(visual_path,exp_name,str(video_num))
     img2video(visual_path,str(video_num))
+"""
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Process some paths and parameters.")
+    parser.add_argument('--visual_path', nargs='?', default="visual_test_predict_visem", help="Path for visual files")
+    parser.add_argument('--exp_name', required=True, help="Experiment name")
+    parser.add_argument('--video_num', required=True, type=int, help="Video number")
+
+    args = parser.parse_args()
+
+    txt2img(args.visual_path, args.exp_name, str(args.video_num))
+    img2video(args.visual_path, str(args.video_num))
