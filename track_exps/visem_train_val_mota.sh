@@ -5,7 +5,7 @@ DATAFILE=visem
 GROUNDTRUTH1=${DATAFILE}/train
 GROUNDTRUTH2=${DATAFILE}/test
 
-OUTPUT_DIR=output_visem/exp_0610_ep50_sche
+OUTPUT_DIR=output_visem/exp_0616_ep50_time
 
 RESULTS1=${OUTPUT_DIR}/val/tracks
 RESULTS2=${OUTPUT_DIR}/test/tracks
@@ -21,29 +21,29 @@ python3 -m torch.distributed.launch \
 --output_dir ${OUTPUT_DIR} \
 --dataset_file ${DATAFILE} \
 --coco_path ${DATAFILE} \
---batch_size 5  \
+--batch_size 8  \
 --with_box_refine  \
 --num_queries 500 \
 --set_cost_class 2 \
 --set_cost_bbox 5 \
---set_cost_giou 4 \
+--set_cost_giou 2 \
 --epochs 30 \
 --lr_drop 100 \
---final_weight 1.0 \
 --device cuda \
---loss_schedule 
+#--resume ${OUTPUT_DIR}/checkpoint.pth \
+#--start_epoch 2 \
+#--resume ${OUTPUT_DIR}/checkpoint0050.pth \
+#--final_weight 1.0 \
+#--loss_schedule 
 
-# --det_val true
-#--frozen_weights mot/619mot17_mot17.pth
-
-
+"""
 #validation phase train val data
 python3 main_track.py  \
 --output_dir ${OUTPUT_DIR} \
 --dataset_file ${DATAFILE} \
 --coco_path ${DATAFILE} \
 --batch_size 1 \
---resume ${OUTPUT_DIR}/checkpoint.pth \
+--resume ${OUTPUT_DIR}/checkpoint0049.pth \
 --eval \
 --track_eval_split val \
 --with_box_refine \
@@ -67,7 +67,8 @@ python3 track_tools/eval_motchallenge.py \
 --tests ${RESULTS1} \
 --gt_type ${GT_TYPE1} \
 --eval_official \
---score_threshold ${THRESHOLD}
+--score_threshold ${THRESHOLD} \
+--output_dir ${OUTPUT_DIR}
 
 
 #eval phase(test)
@@ -76,7 +77,8 @@ python3 track_tools/eval_motchallenge.py \
 --tests ${RESULTS2} \
 --gt_type ${GT_TYPE2} \
 --eval_official \
---score_threshold ${THRESHOLD}
+--score_threshold ${THRESHOLD} \
+--output_dir ${OUTPUT_DIR}
 
 
 #print exp name
@@ -86,3 +88,4 @@ python3 util/print_exp.py ${OUTPUT_DIR}
 python3 learning_curve.py ${OUTPUT_DIR}
 python3 learning_curve_each.py ${OUTPUT_DIR}
 python3 learning_unscaled_curve_each.py ${OUTPUT_DIR}
+"""

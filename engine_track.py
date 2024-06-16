@@ -22,6 +22,9 @@ from datasets.coco_eval import CocoEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
 from datasets.data_prefetcher import data_prefetcher
 from tqdm.notebook import tqdm
+import matplotlib.pyplot as plt
+import torchvision.transforms as T
+
 
 def multiply_loss_giou_values(weight_dict, factor):
     for key in weight_dict:
@@ -41,6 +44,33 @@ def sigmoid_base_sche(initial_weight,final_weight,num_epochs):
     scaled_y = (initial_weight-final_weight) * (1 - y) + final_weight 
     return scaled_y
 
+def normalize_to_rgb(array):
+        array = np.asarray(array)
+        array = np.clip(array, 0, 1)
+        rgb_array = (array * 255).astype(np.uint8)
+        
+    
+        return rgb_array
+
+def nest2tensor(samples,tensor_type):
+        samples.tensors = samples.tensors.type(tensor_type)
+        return samples.tensors
+
+def save_img(samples,tensor_type,name):
+        samples.tensors = samples.tensors.type(tensor_type)
+        samples_sub = samples.tensors
+        unnormalize = T.Normalize(
+            mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
+            std=[1 / 0.229, 1 / 0.224, 1 / 0.225])
+    
+        
+        for i,img in enumerate(samples_sub):
+            img = unnormalize(img)
+            img = img.to('cpu').detach().numpy().copy()
+            img = normalize_to_rgb(img.transpose(1,2,0))
+            #print('img_shape = ',img.shape)
+            plt.imshow(img)
+            plt.savefig(name + '_{}.png'.format(i))  
     
 
 
@@ -48,6 +78,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, scaler: torch.cuda.amp.GradScaler,
                     epoch: int, new_weight_dict : dict,max_norm: float = 0,fp16=False):
+    fp16 = False
+    tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
+    
     model.train()
     criterion.train()
     tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
@@ -58,18 +91,30 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     header = '\n --------- Epoch : [{}] ----------\n'.format(epoch + 1)
     print_freq = 300
 
-    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-    samples, targets = prefetcher.next()
     
+    
+    #data_iter = iter(data_loader)
+    #first_batch = next(data_iter)
+    #i,j,k = first_batch
+    #save_img(i,tensor_type,'w_input_frame/sample_train')
+    
+    
+    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+    samples, targets, pre_samples = prefetcher.next()
     
 
     # for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
     for _ in metric_logger.log_every(range(len(data_loader)), print_freq, header):
         samples.tensors = samples.tensors.type(tensor_type)
         samples.mask = samples.mask.type(tensor_type)
+        # データ確認
+        #save_img(samples,tensor_type,'w_input_frame/sample')
+        #save_img(pre_samples,tensor_type,'w_input_frame/pre_sample')
+        #print(targets[0]['frame_id'])
 
         with torch.cuda.amp.autocast(enabled=fp16):
-            outputs, pre_outputs, pre_targets = model([samples, targets])
+            # input frames
+            outputs, pre_outputs, pre_targets = model([samples, targets,pre_samples])
             loss_dict = criterion(outputs, targets, pre_outputs, pre_targets)
             
             #weight_dict = criterion.weight_dict
@@ -112,12 +157,44 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(grad_norm=grad_total_norm)
 
-        samples, targets = prefetcher.next()
+        samples, targets, presamples = prefetcher.next()
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print('\n')
     print("-------------- Averaged stats ------------ \n ", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+
+def nest2tensor(samples,tensor_type):
+        samples.tensors = samples.tensors.type(tensor_type)
+        return samples.tensors
+
+def save_combined_image(tensor1, tensor2, filename='combined_image.png'):
+    fp16 = False
+    tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
+        # training
+
+    # GPUからCPUに移す
+    tensor1 = nest2tensor(tensor1,tensor_type)
+    tensor2 = nest2tensor(tensor2,tensor_type)
+    tensor1_cpu = tensor1.cpu()
+    tensor2_cpu = tensor2.cpu()
+
+    # テンソルをnumpy配列に変換
+    np_tensor1 = tensor1_cpu.squeeze(0).permute(1, 2, 0).numpy()  # (高さ, 幅, チャンネル)の形に変換
+    np_tensor2 = tensor2_cpu.squeeze(0).permute(1, 2, 0).numpy()  # (高さ, 幅, チャンネル)の形に変換
+
+    # 画像データを正規化
+    np_tensor1 = (np_tensor1 - np_tensor1.min()) / (np_tensor1.max() - np_tensor1.min())
+    np_tensor2 = (np_tensor2 - np_tensor2.min()) / (np_tensor2.max() - np_tensor2.min())
+
+    # matplotlibを使って2つの画像を横に並べて表示
+    fig, ax = plt.subplots(1, 2)
+    ax[0].imshow(np_tensor1)
+    ax[1].imshow(np_tensor2)
+
+    # 画像を保存
+    plt.savefig(filename)
 
 
 @torch.no_grad()
@@ -145,6 +222,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
 
     res_tracks = dict()
     pre_embed = None
+    count = 1
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         # pre process for track.
         if tracker is not None:
@@ -167,7 +245,19 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
             if det_val:
                 outputs = model(samples)
             else:
+                
                 outputs, pre_embed = model(samples, pre_embed)
+                    #count += 1
+                    #pre_samples = samples
+                    #print(torch.equal(nest2tensor(pre_samples,tensor_type), nest2tensor(samples,tensor_type)))
+                
+                    #print(torch.equal(nest2tensor(pre_samples,tensor_type), nest2tensor(samples,tensor_type)))
+                    #save_combined_image(pre_samples,samples,'combined_{}.png'.format(count))
+                    #outputs, pre_embed = model(samples, pre_embed)
+                    #count += 1
+                    #pre_samples = samples
+                    
+                    
             
 #             loss_dict = criterion(outputs, targets)
             

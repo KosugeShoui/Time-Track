@@ -151,7 +151,7 @@ class DeformableTransformer(nn.Module):
 
         # encoder
         memory = self.encoder(src_flatten, spatial_shapes, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
-        print('memory = ',memory.shape)
+        #print('memory = ',memory.shape)
 
         # prepare input for decoder
         bs, _, c = memory.shape

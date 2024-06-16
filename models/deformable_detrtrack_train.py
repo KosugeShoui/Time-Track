@@ -27,6 +27,11 @@ from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
 from .deformable_transformer_track import build_deforamble_transformer
 import copy
 from scipy.optimize import linear_sum_assignment
+from timesformer.models.vit import TimeSformer
+import matplotlib.pyplot as plt
+import numpy as np
+import torchvision.transforms as transforms
+import torchvision.transforms as T
 
 
 def _get_clones(module, N):
@@ -149,36 +154,110 @@ class DeformableDETR(nn.Module):
         new_samples.tensors = torch.stack(shifted_images, dim=0)
         
         return new_samples, new_targets
+    
+    def normalize_to_rgb(self,array):
+        array = np.asarray(array)
+        array = np.clip(array, 0, 1)
+        rgb_array = (array * 255).astype(np.uint8)
+        
+        return rgb_array
+
+    
+    #nestから通常のtensorにする関数
+    def nest2tensor(self,samples,tensor_type):
+        samples.tensors = samples.tensors.type(tensor_type)
+        return samples.tensors
+    #tensorを結合する関数 for timesformer
+    def stack_tensor(self,ten1,ten2,tensor_type):
+        #t1 = self.nest2tensor(ten1,tensor_type)
+        t2 = self.nest2tensor(ten2,tensor_type)
+        t1 = ten1
+        resize = transforms.Resize((224, 224))
+        t1_resized = torch.stack([resize(img) for img in t1])
+        t2_resized = torch.stack([resize(img) for img in t2])
+        combine_ten = torch.stack((t1_resized, t2_resized), dim=2)
+        return combine_ten
+    
+    
+    #データ可視化のための関数
+    def save_img(self,samples,tensor_type,name):
+        if tensor_type != None:
+            samples.tensors = samples.tensors.type(tensor_type)
+            samples_sub = samples.tensors
+        else:
+            samples_sub = samples
+        
+        unnormalize = T.Normalize(
+            mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
+            std=[1 / 0.229, 1 / 0.224, 1 / 0.225])
+        for i,img in enumerate(samples_sub):
+            img = unnormalize(img)
+            img = img.to('cpu').detach().numpy().copy()
+            img = self.normalize_to_rgb(img.transpose(1,2,0))
+            #print('img_shape = ',img.shape)
+            plt.imshow(img)
+            plt.savefig(name + '_{}.png'.format(i))  
+    
             
     def forward(self, samples_targets, unused_embed=None):
+        fp16 = False
+        tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
+        # training
         if self.training:
-            samples, targets = samples_targets        
+            #now frame
+            samples, targets, past_samples = samples_targets
             pre_samples, pre_targets = self.randshift(samples, targets)
             prepre_samples, _ = self.randshift(samples, targets)
-
-            pre_out, pre_embed = self.forward_once(pre_samples, prepre_samples, pre_targets, targets)             
+            
+            #pre frame pre_embed --> dict
+            # 1フレーム目は同じフレーム目の特徴マップを入力している??
+            # pre_embedが前のフレームの埋め込み情報を保持していて、次のフレームに情報を渡している??
+            pre_out, pre_embed, combined_samples = self.forward_once(pre_samples, prepre_samples, past_samples, pre_targets, targets)  
+            #print(combined_samples.shape)  --> [4,3,2,224,224]
+            
+            # 特徴量計算、2つのフレームを同時入力のはず
+            #self.save_img(samples,tensor_type,'w_input/w_first')       
+            #self.save_img(past_samples,None,'w_input/w_past')  
+            combined_samples = self.stack_tensor(past_samples,samples,tensor_type)
+            #print('combine shape = ',combined_samples.shape)
+            # [4,3,2,224,224]
             
             if torch.randn(1).item() > 0.0:
-                out, _ = self.forward_train(samples, pre_embed)     
+                #print('train 1')
+                #out, _ = self.forward_train(samples, pre_embed)
+                out, _ = self.forward_train(samples, pre_embed, combined_samples)     
             else:
                 for key in pre_embed:
                     if key != 'feat':
                         pre_embed[key] = None
-                out, _ = self.forward_train(samples, pre_embed)
+                #print('train 2')
+                #out, _ = self.forward_train(samples, pre_embed)
+                out, _ = self.forward_train(samples, pre_embed, combined_samples)
                 pre_out = None
                 pre_targets = None
             return out, pre_out, pre_targets
-        
+        # inference
         else:
+            print('inf')
             samples = samples_targets
             out, _ = self.forward_train(samples)         
             return out, None
     
     @torch.no_grad()    
-    def forward_once(self, samples: NestedTensor, train_samples: NestedTensor, targets=None, next_targets=None):
+    def forward_once(self, samples: NestedTensor, train_samples: NestedTensor, past_samples:NestedTensor,targets=None, next_targets=None):
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
+        
+        #print('once')
         features, pos = self.backbone(samples)
+        fp16 = False
+        tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
+        #self.save_img(samples,tensor_type,'w_input_check/w_first')       
+        #self.save_img(train_samples,tensor_type,'w_input_check/w_pre')
+        #[bs, channel , h , w]
+        combined_samples = self.stack_tensor(past_samples,samples,tensor_type)
+        
+        
 
         if not isinstance(train_samples, NestedTensor):
             train_samples = nested_tensor_from_tensor_list(train_samples)
@@ -190,6 +269,29 @@ class DeformableDETR(nn.Module):
         for l, (feat, feat2) in enumerate(zip(features, pre_feat)):
             src, mask = feat.decompose()
             src2, _ = feat2.decompose()
+            #print('src1 = ',src.shape)
+            #print('src2 = ',src2.shape)
+            #if l == 0:
+             #   map1,map2 = src, src2
+                #print(stack_src.shape)
+        
+            
+            """
+            if l == 1:
+                src_sub = src[3,:,:,:].to('cpu').detach().numpy().copy()
+                src_sub = np.mean(src_sub[:,:,:],axis=0)
+                src_sub2 = src2[3,:,:,:].to('cpu').detach().numpy().copy()
+                src_sub2 = np.mean(src_sub2[:,:,:],axis=0)
+                #src_sub2 = self.normalize_tensor_rev(src_sub2)
+                plt.imshow(src_sub,cmap='jet')
+                plt.savefig('w_input_check/w_src_map_1024.png')
+                plt.imshow(src_sub2,cmap='jet')
+                plt.savefig('w_input_check/w_src2_map_1024.png')
+            """
+            
+            
+                
+            
             srcs.append(self.combine(torch.cat([self.input_proj[l](src), self.input_proj[l](src2)], dim=1)))
             masks.append(mask)
             assert mask is not None
@@ -212,8 +314,12 @@ class DeformableDETR(nn.Module):
         query_embeds = None
         if not self.two_stage:
             query_embeds = self.query_embed.weight
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, masks, pos, query_embeds)
-
+        #hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, masks, pos, query_embeds)
+        #setttings
+        time_flag = True
+        time_frames = combined_samples
+        
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, time_flag , time_frames, masks, pos, query_embeds)
         outputs_classes = []
         outputs_coords = []
         for lvl in range(hs.shape[0]):
@@ -244,9 +350,11 @@ class DeformableDETR(nn.Module):
         if self.two_stage:
             enc_outputs_coord = enc_outputs_coord_unact.sigmoid()
             out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_boxes': enc_outputs_coord}
-        return out, pre_embed
+        return out, pre_embed, combined_samples
     
-    def forward_train(self, samples: NestedTensor, pre_embed=None):
+    def forward_train(self, samples: NestedTensor, pre_embed=None,com_samples=None):
+        fp16 = False
+        tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -262,9 +370,12 @@ class DeformableDETR(nn.Module):
         """
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
+        
+        
         features, pos = self.backbone(samples)
         
         if pre_embed is not None:
+            # pre_feat --> 前のフレームの特徴マップ??
             pre_reference, pre_tgt, pre_feat, pre_memory = pre_embed['reference'], pre_embed['tgt'], pre_embed['feat'], pre_embed['memory']
         else:
             pre_reference = None
@@ -275,9 +386,26 @@ class DeformableDETR(nn.Module):
         srcs = []
         masks = []
         
+        #self.save_img(samples,tensor_type,'w_input_check/w_first_train') 
+        #self.save_img(pre_samples,tensor_type,'w_input_check/w_pre_train') 
+        
         for l, (feat, feat2) in enumerate(zip(features, pre_feat)):
             src, mask = feat.decompose()
             src2, _ = feat2.decompose()
+            
+            """
+            if l == 0:
+                src_sub = src[3,:,:,:].to('cpu').detach().numpy().copy()
+                src_sub = np.mean(src_sub[:,:,:],axis=0)
+                src_sub2 = src2[3,:,:,:].to('cpu').detach().numpy().copy()
+                src_sub2 = np.mean(src_sub2[:,:,:],axis=0)
+                #src_sub2 = self.normalize_tensor_rev(src_sub2)
+                plt.imshow(src_sub,cmap='jet')
+                plt.savefig('w_input_check/w_src_map_512.png')
+                plt.imshow(src_sub2,cmap='jet')
+                plt.savefig('w_input_check/w_src2_map_512.png')
+            """
+            
             srcs.append(self.combine(torch.cat([self.input_proj[l](src), self.input_proj[l](src2)], dim=1)))
             masks.append(mask)
             assert mask is not None
@@ -299,8 +427,12 @@ class DeformableDETR(nn.Module):
             
         query_embeds = None
         if not self.two_stage:
-            query_embeds = self.query_embed.weight        
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs, masks, pos, query_embeds, pre_reference, pre_tgt)           
+            query_embeds = self.query_embed.weight     
+        
+        # Deformable Transformer 
+        time_flag = True
+        #hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs, masks, pos, query_embeds, pre_reference, pre_tgt)             
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,time_flag, com_samples, masks, pos, query_embeds, pre_reference, pre_tgt)           
             
         outputs_classes = []
         outputs_coords = []
@@ -607,6 +739,29 @@ class MLP(nn.Module):
             x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
         return x
 
+class TimeSformer_getattn(nn.Module):
+    def __init__(self,pretrained_model):
+        super().__init__()
+
+        self.backbone = TimeSformer(img_size=224, num_classes=1000, num_frames=2, 
+                                    attention_type='divided_space_time',  pretrained_model=pretrained_model)
+        self.backbone_output_dim = 768
+    
+    def forward(self, x):
+        # xの形状は [batch_size, num_frames, channels, height, width]
+        
+        batch_size, channels, num_frames, height, width = x.shape
+        assert channels == 3 and height == 224 and width == 224, \
+            "Input shape must be [batch_size, 3 , num_frames , 224, 224]"
+
+
+        # TimeSformerモデルに入力
+        cls_token, features = self.backbone(x)
+        self.output_dim = 1000
+        self.head = nn.Linear(self.backbone_output_dim, self.output_dim, bias=True)
+
+        return features
+
 
 def build(args):
     if args.dataset_file == 'coco':
@@ -615,13 +770,22 @@ def build(args):
         num_classes = 20
     elif args.dataset_file == "coco_panoptic":
         num_classes = 250
+    elif args.dataset_file == "visem":
+        num_classes = 3
     else:
         num_classes = 20 
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
-
-    transformer = build_deforamble_transformer(args)
+    #timesformer instances
+    
+    pretrained_model = './weight/TimeSformer_divST_8_224_SSv2.pyth'
+    time_attn = TimeSformer_getattn(pretrained_model)
+    
+    transformer = build_deforamble_transformer(args,time_attn)
+    #transformer = build_deforamble_transformer(args)
+    
+    
     model = DeformableDETR(
         backbone,
         transformer,

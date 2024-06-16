@@ -117,7 +117,7 @@ def get_args_parser():
     parser.add_argument('--id_loss_coef', default=1, type=float)
 
     # dataset parameters
-    parser.add_argument('--dataset_file', default='coco')
+    parser.add_argument('--dataset_file', default='visem')
     parser.add_argument('--coco_path', default='./data/coco', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
@@ -162,7 +162,7 @@ def get_args_parser():
 
 def main(args):
     utils.init_distributed_mode(args)
-    print("git:\n  {}\n".format(utils.get_sha()))
+    #print("git:\n  {}\n".format(utils.get_sha()))
 
     if args.frozen_weights is not None:
         assert args.masks, "Frozen training is meant for segmentation only"
@@ -271,6 +271,7 @@ def main(args):
 
     output_dir = Path(args.output_dir)
     if args.resume:
+        print('resume use true')
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)
@@ -366,8 +367,8 @@ def main(args):
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             # extra checkpoint before LR drop and every 5 epochs
-            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 50 == 0:
-                checkpoint_paths.append(output_dir / f'checkpoint{epoch + 1:04}.pth')
+            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 10 == 0:
+                checkpoint_paths.append(output_dir / f'checkpoint{epoch + 1:02}.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
                     'model': model_without_ddp.state_dict(),
@@ -381,12 +382,14 @@ def main(args):
                      'epoch': epoch,
                      'n_parameters': n_parameters}
         
+        """
         if (epoch + 1) % 15 == 0 or epoch > args.epochs - 3:
             test_stats, coco_evaluator, _ = evaluate(
                 model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir, fp16=args.fp16
             )
             log_test_stats = {**{f'test_{k}': v for k, v in test_stats.items()}}
             log_stats.update(log_test_stats)
+        """
         
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
