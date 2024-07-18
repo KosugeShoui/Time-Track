@@ -22,7 +22,7 @@ import util.misc as utils
 import datasets.samplers as samplers
 from datasets.sampler_video_distributed import DistributedVideoSampler
 from datasets import build_dataset, get_coco_api_from_dataset
-from engine_track import evaluate, train_one_epoch, multiply_loss_giou_values, sigmoid_base_sche
+from engine_track import evaluate, train_one_epoch, multiply_loss_giou_values, sigmoid_base_sche, sigmoid
 from models import build_tracktrain_model, build_tracktest_model, build_model
 from models import Tracker
 from models import save_track
@@ -51,12 +51,14 @@ def get_args_parser():
     
     #スケジューリング導入するかどうか
     parser.add_argument('--loss_schedule', default=False, action='store_true')
+    parser.add_argument('--time_sche', default=False, action='store_true')
+    parser.add_argument('--timesformer',default=False,action='store_true')
 
     parser.add_argument('--sgd', action='store_true')
 
     # Variants of Deformable DETR
     parser.add_argument('--with_box_refine', default=True, action='store_true')
-    parser.add_argument('--two_stage', default=False, action='store_true')
+    parser.add_argument('--two_stage', default=True, action='store_true')
 
     # Model parameters
     parser.add_argument('--frozen_weights', type=str, default=None,
@@ -341,9 +343,15 @@ def main(args):
         return
 
     print("--------------------Start training--------------------\n")
+    #print(args.start_epoch)
+    #print('epoch = ',epoch + 1)
     start_time = time.time()
+     # ベストepochのためのloss_dictの定義
+    loss_list = []
     for epoch in tqdm(range(args.start_epoch, args.epochs)):
-        
+        path_flag = False
+        #print(epoch)
+        #print(args.start_epoch)
         if args.distributed:
             sampler_train.set_epoch(epoch)
 
@@ -355,15 +363,43 @@ def main(args):
             multi_weight = sigmoid_base_sche(args.set_cost_giou,args.final_weight,args.epochs)
             new_weight_dict = multiply_loss_giou_values(criterion.weight_dict,multi_weight[epoch])
             #print(multi_weight)   
-
         else:
             new_weight_dict = criterion.weight_dict
         
+        
+        if args.time_sche :
+            print('\n --- Time Weight Scheduling True ---\n')
+            epoch_num = args.epochs
+            x = np.linspace(0,epoch_num,100)
+            scaled_x = 12 * (x / 50) - 6
+            time_weight = sigmoid(scaled_x)
+            time_alpha = time_weight[epoch]
+        else:
+            time_alpha = 1.0
+        
+        
         #learning start 
         train_stats = train_one_epoch(
-            model, criterion, data_loader_train, optimizer, device, scaler,epoch,new_weight_dict, args.clip_max_norm, fp16=args.fp16)
+            model, criterion, data_loader_train, optimizer, device, scaler, epoch,new_weight_dict, time_alpha, args.clip_max_norm, fp16=args.fp16)
         
         lr_scheduler.step()
+                
+        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                     'epoch': epoch,
+                     'n_parameters': n_parameters}
+        
+        if args.output_dir and utils.is_main_process():
+            with (output_dir / "log.txt").open("a") as f:
+                f.write(json.dumps(log_stats) + "\n")
+        
+        with open((output_dir / "log.txt"), 'r') as file:
+            lines = file.readlines()
+
+        json_txt = lines[len(lines)-1]
+        data = json.loads(json_txt)
+        loss_list.append(data['train_loss'])
+        
+        # Best Epoch save phase
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             # extra checkpoint before LR drop and every 5 epochs
@@ -377,34 +413,35 @@ def main(args):
                     'epoch': epoch,
                     'args': args,
                 }, checkpoint_path)
+        """
+        if args.output_dir:
+            if epoch + 1 == 1 or epoch  == args.start_epoch :
+                #print(args.start_epoch)
+                #print('epoch = ',epoch + 1)
+                path_flag = True
+                checkpoint_paths = [output_dir / 'checkpoint.pth']
+            else:
+                #loss list 1 past
+                loss_list_past = loss_list[:-1]
+                if min(loss_list_past) >= loss_list[epoch - args.start_epoch]: 
+                    path_flag = True
+                    checkpoint_paths = [output_dir / 'best_weight.pth']
+                    print('\nbest weight update\n')
+                else:
+                    print('\nbest weight no update\n')
                 
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     'epoch': epoch,
-                     'n_parameters': n_parameters}
-        
-        """
-        if (epoch + 1) % 15 == 0 or epoch > args.epochs - 3:
-            test_stats, coco_evaluator, _ = evaluate(
-                model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir, fp16=args.fp16
-            )
-            log_test_stats = {**{f'test_{k}': v for k, v in test_stats.items()}}
-            log_stats.update(log_test_stats)
-        """
-        
-        if args.output_dir and utils.is_main_process():
-            with (output_dir / "log.txt").open("a") as f:
-                f.write(json.dumps(log_stats) + "\n")
+            if path_flag :        
+                for checkpoint_path in checkpoint_paths:
+                    utils.save_on_master({
+                        'model': model_without_ddp.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'lr_scheduler': lr_scheduler.state_dict(),
+                        'epoch': epoch,
+                        'args': args,
+                    }, checkpoint_path)
+            """
 
-            # for evaluation logs
-#            if coco_evaluator is not None:
-#                 (output_dir / 'eval').mkdir(exist_ok=True)
-#                 if "bbox" in coco_evaluator.coco_eval:
-#                     filenames = ['latest.pth']
-#                     if epoch % 50 == 0:
-#                         filenames.append(f'{epoch:03}.pth')
-#                     for name in filenames:
-#                         torch.save(coco_evaluator.coco_eval["bbox"].eval,
-#                                    output_dir / "eval" / name)
+        
         #1エポックごとに学習曲線を保存
         plot_combined_loss(args.output_dir)
         plot_combined_unscaled_loss(args.output_dir)

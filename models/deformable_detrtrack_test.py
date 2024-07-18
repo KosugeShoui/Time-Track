@@ -184,12 +184,13 @@ class DeformableDETR(nn.Module):
         
         
         #settings
-        time_flag = True
+        #time_flag = True
         fp16 = False
         tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
         time_frames = self.stack_tensor(past_samples,samples,tensor_type)
+        time_weight = 1.0     
         
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, time_flag,time_frames,masks, pos, query_embeds)
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs,time_frames,time_weight,masks, pos, query_embeds)
         
         
         cur_hs = hs
@@ -222,8 +223,9 @@ class DeformableDETR(nn.Module):
         if pre_embed is not None:
             # track mode
             pre_reference, pre_tgt = pre_embed['reference'], pre_embed['tgt']
-                    
-            hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,time_flag, time_frames, masks, pos, query_embeds, pre_reference, pre_tgt, memory)
+            
+            time_weight = 1.0        
+            hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,time_frames,time_weight, masks, pos, query_embeds, pre_reference, pre_tgt, memory)
             outputs_classes = []
             outputs_coords = []
             for lvl in range(hs.shape[0]):
@@ -533,7 +535,7 @@ class TimeSformer_getattn(nn.Module):
     def __init__(self,pretrained_model):
         super().__init__()
 
-        self.backbone = TimeSformer(img_size=224, num_classes=1000, num_frames=2, 
+        self.backbone = TimeSformer(img_size=224, patch_size = 16,num_classes=1000, num_frames=2, 
                                     attention_type='divided_space_time',  pretrained_model=pretrained_model)
         self.backbone_output_dim = 768
     
@@ -563,15 +565,23 @@ def build(args):
     elif args.dataset_file == "visem":
         num_classes = 3
     else:
-        num_classes = 20 
+        num_classes = 3
     device = torch.device(args.device)
 
-    backbone = build_backbone(args)
-    pretrained_model = './weight/TimeSformer_divST_8_224_SSv2.pyth'
-    time_attn = TimeSformer_getattn(pretrained_model)
     
-    transformer = build_deforamble_transformer(args,time_attn)
-    #transformer = build_deforamble_transformer(args)
+    backbone = build_backbone(args)
+    #timesformer instances
+    if args.timesformer:
+        #print('time')
+        #pretrained_model = './weight/TimeSformer_divST_8_224_SSv2.pyth'
+        pretrained_model = None
+        
+        time_attn = TimeSformer_getattn(pretrained_model)
+        transformer = build_deforamble_transformer(args,time_attn)
+    else:    
+        #print('no time')
+        transformer = build_deforamble_transformer(args,time_attn=None)
+    
 
     model = DeformableDETR(
         backbone,

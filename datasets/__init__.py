@@ -6,6 +6,7 @@ from .coco import build as build_coco
 from .mot import build as build_mot
 from .mix import build as build_mix
 from .visem import build as build_visem
+from .visem_original import build as build_visem_ori
 from .dance import build as build_dance
 from .crowdhuman import build as build_crowdhuman
 
@@ -21,7 +22,11 @@ def get_coco_api_from_dataset(dataset):
 
 def build_dataset(image_set, args):
     if args.dataset_file == 'visem':
-        return build_visem(image_set, args)
+        return build_visem(image_set,args)
+    if args.dataset_file == 'visem_12':
+        return build_visem(image_set,args)
+    if args.dataset_file == 'visem_13':
+        return build_visem(image_set,args)
     if args.dataset_file == 'visem_sub':
         return build_visem(image_set, args)
     if args.dataset_file == 'dance':

@@ -265,10 +265,59 @@ def make_coco_transforms(image_set):
         ])
     raise ValueError(f'unknown {image_set}')
 
+def make_mot_transforms(image_set, args):
+
+    normalize = T.Compose([
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+    scales = scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
+
+    if image_set == 'train' and not args.eval:
+       return T.Compose([
+            T.RandomHorizontalFlip(),
+            T.RandomSelect(
+                T.RandomResize(scales, max_size=1333),
+                T.Compose([
+                    T.RandomResize([400, 500, 600]),
+                    T.RandomSizeCrop(384, 600),
+                    T.RandomResize(scales, max_size=1333),
+                ])
+            ),
+            normalize,
+        ])
+    
+    if image_set == 'trainall' and not args.eval:
+        return T.Compose([
+            T.RandomHorizontalFlip(),
+            T.RandomSelect(
+                T.RandomResize(scales, max_size=640),
+                T.Compose([
+                    T.RandomResize([800, 1000, 1200]),
+#                     T.RandomSizeCrop(384, 600),
+                    T.RandomSizeCrop_MOT(800, 1200),
+                    T.RandomResize(scales, max_size=1333)],)
+            ),
+            normalize,
+        ])
+    if image_set == 'val' or args.eval:
+        return T.Compose([
+            T.RandomResize([800], max_size=1333),
+            normalize,
+        ])
+    if image_set == 'test' or args.eval:
+        return T.Compose([
+            T.RandomResize([800], max_size=1333),
+            normalize,
+        ])
+    raise ValueError(f'unknown {image_set}')
+
+
 
     
     
-def make_mot_transforms(image_set, args):
+def make_mot_transforms_times(image_set, args):
     # 通ってるのここ
     #print('here')
     
@@ -279,7 +328,7 @@ def make_mot_transforms(image_set, args):
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
-    scales = [640]
+    scales = [800]
     #scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
 
     if image_set == 'train' and not args.eval:
@@ -316,12 +365,12 @@ def make_mot_transforms(image_set, args):
         ])
     if image_set == 'val' or args.eval:
         return T.Compose([
-            T.RandomResize([480], max_size=640),
+            T.RandomResize([800], max_size=1333),
             normalize,
         ])
     if image_set == 'test' or args.eval:
         return T.Compose([
-            T.RandomResize([480], max_size=640),
+            T.RandomResize([800], max_size=1333),
             normalize,
         ])
     raise ValueError(f'unknown {image_set}')
@@ -342,6 +391,12 @@ def build(image_set, args):
     }
 
     img_folder, ann_file = PATHS[image_set]
-    dataset = CocoDetection(img_folder, ann_file, transforms=make_mot_transforms(image_set, args), return_masks=args.masks,
+    if args.timesformer:
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_mot_transforms_times(image_set, args), return_masks=args.masks,
                             cache_mode=args.cache_mode, local_rank=get_local_rank(), local_size=get_local_size())
+    else:
+        print('normal transform')
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_mot_transforms(image_set, args), return_masks=args.masks,
+                            cache_mode=args.cache_mode, local_rank=get_local_rank(), local_size=get_local_size())
+        
     return dataset

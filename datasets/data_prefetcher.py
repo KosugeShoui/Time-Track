@@ -37,11 +37,19 @@ def to_cuda(samples, targets, pre_samples, device):
     #samples.tensors = samples.tensors.type(tensor_type)
     #print(samples.tensors.shape)
     #save_img(samples,tensor_type,'w_input_prefetch')
-    pre_samples_sub = torch.stack(pre_samples, dim=0)
+    try:
+        #print('try ok')
+        pre_samples_sub = torch.stack(pre_samples, dim=0)
+        pre_samples = pre_samples_sub
+        pre_samples = pre_samples.to(device, non_blocking=True)
+    except:
+        #print('presample None')
+        pre_samples_sub = None
+    
     #print(pre_samples_sub.shape)
-    pre_samples = pre_samples_sub
+    
     samples = samples.to(device, non_blocking=True)
-    pre_samples = pre_samples.to(device, non_blocking=True)
+    
     targets = [{k: v.to(device, non_blocking=True) for k, v in t.items()} for t in targets]
     return samples, targets, pre_samples
 

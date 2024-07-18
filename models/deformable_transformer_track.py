@@ -24,6 +24,7 @@ from timesformer.models.vit import TimeSformer
 import os
 import cv2
 import torchvision.transforms as transforms
+import tqdm
 
 
 class DeformableTransformer(nn.Module):
@@ -174,8 +175,8 @@ class DeformableTransformer(nn.Module):
         
         return scaled_tensor
 
-    def threshold_array(self,arr, threshold):
-        arr[arr <= threshold] = 0
+    def threshold_array(self,arr, threshold,min):
+        arr[arr <= threshold] = min
         return arr
     
     #nestから通常のtensorにする関数
@@ -193,11 +194,19 @@ class DeformableTransformer(nn.Module):
         return combine_ten
 
     #def forward(self, srcs, masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
-    def forward(self, srcs, time_flag , time_frame, masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
+    def forward(self, srcs, time_frame,time_weight, masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
         assert self.two_stage or query_embed is not None
         fp16 = False
         tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
-
+        
+        #print(self.time_attn)
+        if self.time_attn != None:
+            #print('time')
+            time_flag = True
+        else:
+            time_flag = False
+        
+            
         # prepare input for encoder
         src_flatten = []
         time_flatten = []
@@ -249,6 +258,7 @@ class DeformableTransformer(nn.Module):
             #print(src_shape_list)
             spatial_shape = (h, w)
             spatial_shapes.append(spatial_shape)
+            #print(src_shape_list)
             """
             if lvl == 0:
                 src_sub2 = src[bs-1,:,:,:].to('cpu').detach().numpy().copy()
@@ -257,26 +267,31 @@ class DeformableTransformer(nn.Module):
                 plt.imshow(src_sub2,cmap='jet')
                 plt.savefig('w_weightedmap.png')
             """
-            
-        
+            #print(lvl)
             # Feature Map + Resized Attention Weight or F * Attention Weight
             if time_flag:
                 time_memory_map = time_memory.view(bs,14,14,256)
                 time_memory_map = self.normalize_14x14(time_memory_map)
                 # Attention Weight Threshold [0.3.0.5.0.7]
-                #time_memory_map = self.threshold_array(time_memory_map,0.3)
                 time_memory_map = F.interpolate(time_memory_map.permute(0, 3, 1, 2), size=(h, w), mode='bilinear', align_corners=False)
+                # patch selection 
+                #time_memory_map = self.threshold_array(time_memory_map,0.7)
                 time_memory_map = time_memory_map.permute(0, 1, 2, 3)
                 #print(time_memory_map.shape)
                 # Scaling for src matching time_memory_map
                 #time_memory_map = self.scale_tensor(time_memory_map, 0 , 3)
+                
                 """
                 if lvl == 0:
-                    #visual data prepare
+                #for i in range(256):
+                #visual data prepare
+                #time_memory_map_sub = time_memory_map[bs-1,:,:,:].to('cpu').detach().numpy().copy()
                     time_memory_map_sub = time_memory_map[bs-1,:,:,:].to('cpu').detach().numpy().copy()
-                    time_memory_map_sub = np.mean(time_memory_map_sub,axis=0)
+                    #print('Time Mem Scale = ',np.max(time_memory_map_sub),np.min(time_memory_map_sub))
+                    #time_memory_map_sub = time_memory_map_sub
                     #time_memory_map_sub = 1 - time_memory_map_sub
-                    save_path = 'w_eval_time_jet_train'
+                    time_memory_map_sub = np.mean(time_memory_map_sub,axis=0)
+                    save_path = 'w_eval_time_train_11'
                     os.makedirs(save_path,exist_ok=True)
                     list_num = len(os.listdir(save_path))
                     #1 time memory
@@ -287,8 +302,18 @@ class DeformableTransformer(nn.Module):
                     plt.savefig(save_path + '/time_weight_{}.png'.format(list_num+1),bbox_inches='tight',pad_inches=0)
                 """
                 
-                # memory flatten
-                time_memory_map = time_memory_map.flatten(2).transpose(1, 2)
+                
+                
+                
+                # memory flatten 
+                # 最も大きい特徴マップにのみAttention Weightを加える
+                if lvl == 0:
+                    time_memory_map = time_memory_map.flatten(2).transpose(1, 2)
+                else:
+                    time_memory_map = time_memory_map.flatten(2).transpose(1, 2)
+                    time_memory_map = time_memory_map * 0
+                    #print(time_memory_map)
+                    
                 time_flatten.append(time_memory_map)
                
             # Normal Phase
@@ -310,35 +335,43 @@ class DeformableTransformer(nn.Module):
         # encoder
         if memory is None:
             memory = self.encoder(src_flatten, spatial_shapes, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
+            #time track
             if time_flag:
                 time_flatten = torch.cat(time_flatten, 1)
                 #print(time_flatten.shape)
-                min_vals = memory.min(dim=1, keepdim=True).values
-                max_vals = memory.max(dim=1, keepdim=True).values
+                #min_vals = memory.min(dim=1, keepdim=True).values
+                #max_vals = memory.max(dim=1, keepdim=True).values
                 #time_flatten2  = time_flatten * (max_vals - min_vals) + min_vals
-                max_values = torch.max(time_flatten, dim=1).values
-                min_values = torch.min(time_flatten, dim=1).values
+                #max_values = torch.max(time_flatten, dim=1).values
+                #min_values = torch.min(time_flatten, dim=1).values
                 #print("Max values along feature dimension:\n", max_values,max_vals)
                 #print("Min values along feature dimension:\n", min_values,min_vals)
                 #memory2 = memory
-                memory = memory + 0.001 * time_flatten
+                memory = memory + 0.01 * time_weight * time_flatten
                 #Encode後のAttentionWeigntの可視化
+                """
+                for i in tqdm.tqdm(range(256)):
                 
+                    memory_h,memory_w = src_shape_list[0][0],src_shape_list[0][1]
+                    memory_sub = memory[:,:memory_h*memory_w,:]
+                    src_sub = memory_sub[bs-1,:,:].to('cpu').detach().numpy().copy()
+                    src_sub = src_sub.reshape(memory_h,memory_w,256)
+                    #src_sub = src_sub[:,:,]
+                    
+                    src_sub = src_sub[:,:,i]
+                    #src_sub = self.threshold_array(src_sub,0.5,np.min(src_sub))
+                    #print('Mem Scale = ',np.max(src_sub),np.min(src_sub))
+                    src_sub = self.normalize_tensor(src_sub)
+                    save_path = 'w_eval_timemem_train_13'
+                    os.makedirs(save_path,exist_ok=True)
+                    list_num = len(os.listdir(save_path))
+                    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+                    plt.imshow(src_sub,cmap='jet')
+                    plt.axis('tight')
+                    plt.axis('off')
+                    plt.savefig(save_path +'/w_eval_encode_{}.png'.format(list_num+1),bbox_inches='tight',pad_inches=0)
                 """
-                memory_h,memory_w = src_shape_list[0][0],src_shape_list[0][1]
-                memory_sub = memory[:,:memory_h*memory_w,:]
-                #print(memory_sub.shape)
-                src_sub = memory_sub[bs-1,:,:].to('cpu').detach().numpy().copy()
-                src_sub = src_sub.reshape(memory_h,memory_w,256)
-                src_sub = np.mean(src_sub[:,:],axis=2)
-                #print(np.max(src_sub),np.min(src_sub))
-                src_sub = self.normalize_tensor(src_sub)
-                save_path = 'w_eval_timemem_jet_train'
-                os.makedirs(save_path,exist_ok=True)
-                list_num = len(os.listdir(save_path))
-                plt.imshow(src_sub,cmap='jet')
-                plt.savefig(save_path +'/w_eval_encode_{}.png'.format(list_num+1))
-                """
+                
                 
                 
             

@@ -77,7 +77,7 @@ def save_img(samples,tensor_type,name):
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, scaler: torch.cuda.amp.GradScaler,
-                    epoch: int, new_weight_dict : dict,max_norm: float = 0,fp16=False):
+                    epoch: int, new_weight_dict : dict, time_weight : float , max_norm: float = 0,fp16=False):
     fp16 = False
     tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
     
@@ -101,6 +101,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     
     prefetcher = data_prefetcher(data_loader, device, prefetch=True)
     samples, targets, pre_samples = prefetcher.next()
+    #print(pre_samples)
     
 
     # for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
@@ -114,7 +115,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         with torch.cuda.amp.autocast(enabled=fp16):
             # input frames
-            outputs, pre_outputs, pre_targets = model([samples, targets,pre_samples])
+            outputs, pre_outputs, pre_targets = model([samples, targets, pre_samples],time_weight)
             loss_dict = criterion(outputs, targets, pre_outputs, pre_targets)
             
             #weight_dict = criterion.weight_dict
@@ -222,8 +223,8 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
 
     res_tracks = dict()
     pre_embed = None
-    count = 1
-    for samples, targets ,past_samples in metric_logger.log_every(data_loader, 10, header):
+    #count = 1
+    for samples, targets , past_samples in metric_logger.log_every(data_loader, 10, header):
         # pre process for track.
         if tracker is not None:
             if phase != 'train':
